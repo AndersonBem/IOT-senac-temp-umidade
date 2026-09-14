@@ -1,0 +1,637 @@
+GUIA DE COMANDOS - ESP32-C3 + MICROPYTHON + DHT11 + OLED
+=========================================================
+
+Informacoes confirmadas deste projeto
+-------------------------------------
+
+Placa/chip: ESP32-C3, revisao 0.4, flash de 4 MB
+Porta usada neste computador: COM3
+Firmware atual: MicroPython 1.28.0 - ESP32_GENERIC_C3
+DHT11 DATA: GPIO1
+OLED: SSD1306 compativel, 72x40, endereco I2C 0x3C
+OLED SDA: GPIO5
+OLED SCL: GPIO6
+
+Atencao: a porta COM pode mudar em outro computador ou depois de reconectar a
+placa. Substitua COM3 nos comandos quando necessario.
+
+
+1. ROTINA NORMAL DE DESENVOLVIMENTO
+===================================
+
+Abra o terminal do VS Code na pasta raiz do projeto.
+
+Ativar o ambiente virtual no PowerShell:
+
+    .\.venv\Scripts\Activate.ps1
+
+Enviar o programa local para a placa como /main.py:
+
+    python -m mpremote connect COM3 fs cp .\src\main.py :main.py
+
+Reiniciar a placa:
+
+    python -m mpremote connect COM3 reset
+
+Abrir o terminal serial/REPL e acompanhar os dados:
+
+    python -m mpremote connect COM3
+
+Para sair do terminal do mpremote:
+
+    Ctrl+]
+
+Se Ctrl+] nao funcionar no teclado, tente Ctrl+X.
+
+Fluxo normal depois de alterar src\main.py:
+
+    python -m mpremote connect COM3 fs cp .\src\main.py :main.py
+    python -m mpremote connect COM3 reset
+    python -m mpremote connect COM3
+
+
+2. COMANDOS UTEIS DO MPREMOTE
+=============================
+
+Confirmar que MicroPython responde e mostrar a versao:
+
+    python -m mpremote connect COM3 exec "import sys; print(sys.implementation); print(sys.version)"
+
+Listar arquivos na raiz da placa:
+
+    python -m mpremote connect COM3 fs ls :
+
+Listar bibliotecas instaladas:
+
+    python -m mpremote connect COM3 fs ls :/lib
+
+Listar arquivos recursivamente:
+
+    python -m mpremote connect COM3 fs tree :
+
+Copiar um arquivo da placa para o computador:
+
+    python -m mpremote connect COM3 fs cp :main.py .\main-da-placa.py
+
+Remover um arquivo especifico da placa (use com cuidado):
+
+    python -m mpremote connect COM3 fs rm :nome-do-arquivo.py
+
+Executar src\main.py temporariamente, sem instala-lo como programa de boot:
+
+    python -m mpremote connect COM3 run .\src\main.py
+
+Instalar o driver SSD1306 na placa:
+
+    python -m mpremote connect COM3 mip install ssd1306
+
+Verificar o barramento I2C do OLED:
+
+    python -m mpremote connect COM3 exec "from machine import Pin, SoftI2C; i2c=SoftI2C(sda=Pin(5), scl=Pin(6)); print([hex(x) for x in i2c.scan()])"
+
+O resultado esperado para o OLED e ['0x3c'].
+
+Testar uma leitura unica do DHT11:
+
+    python -m mpremote connect COM3 exec "from machine import Pin; import dht, time; sensor=dht.DHT11(Pin(1)); time.sleep(2); sensor.measure(); print('Temperatura:', sensor.temperature(), 'C'); print('Umidade:', sensor.humidity(), '%')"
+
+O DHT11 pode ocasionalmente retornar ETIMEDOUT. Aguarde dois segundos e tente
+novamente. O programa principal ja trata esse erro e continua executando.
+
+
+3. DESCOBRIR A PORTA COM NO WINDOWS
+===================================
+
+No PowerShell:
+
+    [System.IO.Ports.SerialPort]::GetPortNames()
+
+Alternativa pelo registro do Windows:
+
+    reg query HKLM\HARDWARE\DEVICEMAP\SERIALCOMM
+
+Para identificar qual porta pertence a placa, execute uma vez com ela
+desconectada e outra vez depois de conecta-la. Use a porta que apareceu.
+
+Tambem e possivel conferir em:
+
+    Gerenciador de Dispositivos > Portas (COM e LPT)
+
+A placa costuma aparecer como "Dispositivo Serial USB (COMx)" com identificador
+Espressif VID_303A e PID_1001.
+
+
+4. PREPARAR O PROJETO EM OUTRA MAQUINA COM VS CODE
+==================================================
+
+Esta secao descreve como continuar trabalhando com ESTA MESMA placa em outro
+computador Windows. Como o MicroPython, /main.py e /lib/ssd1306.mpy ja estao na
+flash da placa, trocar de computador nao exige gravar novamente o firmware.
+
+
+4.1 O QUE COPIAR PARA A OUTRA MAQUINA
+-------------------------------------
+
+Copie a pasta do projeto, incluindo pelo menos:
+
+    src\main.py
+    GUIA_COMANDOS.txt
+    ESP32_GENERIC_C3-20260406-v1.28.0.bin
+    backup-micropython-1.29.bin
+    backup-arduino-esp32c3.bin
+
+Finalidade de cada item:
+
+- src\main.py: fonte editavel do programa executado pela placa.
+- GUIA_COMANDOS.txt: este manual de instalacao, operacao e recuperacao.
+- ESP32_GENERIC_C3-20260406-v1.28.0.bin: firmware MicroPython usado atualmente;
+  so e necessario para recuperacao ou nova gravacao.
+- backup-micropython-1.29.bin: copia integral do estado anterior com MicroPython
+  1.29.0. Pode conter credenciais e deve ser guardada de forma privada.
+- backup-arduino-esp32c3.bin: copia integral do antigo firmware Arduino; e
+  opcional para o desenvolvimento, mas deve ser guardado em local seguro.
+
+O backup integral pode conter configuracoes ou credenciais antigas. Nao o
+publique em repositorios publicos.
+
+Quando forem adicionados outros fontes e configuracoes ao projeto, copie tambem:
+
+    src\*.py
+    lib\                  (se esta pasta local vier a existir)
+    requirements*.txt     (se vierem a existir)
+    README.md             (se vier a existir)
+
+Nao copie estas pastas entre computadores:
+
+    .venv\
+    __pycache__\
+
+A .venv contem caminhos e executaveis especificos da maquina onde foi criada.
+Ela deve ser recriada em cada computador.
+
+Se futuramente existir um arquivo com nome secrets.py, copie-o apenas por um
+meio privado. Ele podera conter nome e senha do Wi-Fi e nao deve ser publicado.
+
+
+4.2 INSTALAR OS PROGRAMAS NECESSARIOS
+-------------------------------------
+
+1. Instale Python 3.11 para Windows pelo site oficial do Python. Mantenha o
+   Python Launcher (comando py) habilitado durante a instalacao.
+2. Instale o Visual Studio Code.
+3. Abra o VS Code e instale a extensao oficial "Python", publicada pela
+   Microsoft.
+4. Copie a pasta do projeto para um caminho de sua escolha.
+5. No VS Code, use File > Open Folder e selecione a raiz do projeto (a pasta que
+   contem este guia e a pasta src).
+6. Abra Terminal > New Terminal. O prompt deve estar na raiz do projeto.
+
+Confira o Python:
+
+    py -3.11 --version
+
+Crie uma nova venv dentro do projeto:
+
+    py -3.11 -m venv .venv
+
+Ative a venv no PowerShell:
+
+    .\.venv\Scripts\Activate.ps1
+
+O inicio do prompt deve passar a mostrar (.venv).
+
+Se a politica do PowerShell impedir a ativacao, nao e obrigatorio alterar a
+politica do Windows. Use diretamente o Python da venv nos comandos:
+
+    .\.venv\Scripts\python.exe -m pip install --upgrade pip
+    .\.venv\Scripts\python.exe -m pip install esptool==5.4.0 mpremote==1.29.0
+
+Com a venv ativada, os equivalentes mais curtos sao:
+
+    python -m pip install --upgrade pip
+    python -m pip install esptool==5.4.0 mpremote==1.29.0
+
+As versoes acima reproduzem exatamente as ferramentas usadas neste projeto.
+Confira:
+
+    python -m esptool version
+    python -m mpremote --version
+
+Resultados esperados:
+
+    esptool v5.4.0
+    mpremote 1.29.0
+
+
+4.3 CONFIGURAR O INTERPRETADOR NO VS CODE
+-----------------------------------------
+
+1. Pressione Ctrl+Shift+P.
+2. Execute "Python: Select Interpreter".
+3. Escolha o interpretador localizado em .venv\Scripts\python.exe.
+
+Os modulos machine, network, dht e ssd1306 pertencem ao MicroPython/placa. A
+extensao Python do computador pode sublinha-los como importacoes desconhecidas;
+isso nao significa que falharao na ESP32-C3.
+
+
+4.4 CONECTAR ESTA PLACA NO NOVO COMPUTADOR
+------------------------------------------
+
+Use um cabo USB-C que suporte dados. O LED acender nao prova que o cabo possui
+fios de dados.
+
+Descubra as portas antes e depois de conectar a placa:
+
+    [System.IO.Ports.SerialPort]::GetPortNames()
+
+Alternativa:
+
+    reg query HKLM\HARDWARE\DEVICEMAP\SERIALCOMM
+
+No Gerenciador de Dispositivos, esta placa normalmente aparece como
+"Dispositivo Serial USB (COMx)". O numero pode ser diferente de COM3. Nos
+comandos abaixo, substitua COMx pela porta encontrada, por exemplo COM7.
+
+Teste a comunicacao sem modificar a placa:
+
+    python -m mpremote connect COMx exec "import sys; print(sys.implementation); print(sys.version)"
+
+O resultado deve identificar MicroPython 1.28.0 e ESP32_GENERIC_C3.
+
+Liste o que ja esta na placa:
+
+    python -m mpremote connect COMx fs ls :
+    python -m mpremote connect COMx fs ls :/lib
+
+Nesta placa, devem existir pelo menos:
+
+    /main.py
+    /lib/ssd1306.mpy
+
+Nao reinstale MicroPython apenas porque mudou de computador. O firmware fica na
+placa, nao na .venv.
+
+
+4.5 FAZER UMA COPIA DO CODIGO QUE ESTA NA PLACA
+-----------------------------------------------
+
+Antes de substituir /main.py, pode-se copiar a versao existente para o PC:
+
+    python -m mpremote connect COMx fs cp :main.py .\main-da-placa.py
+
+Compare main-da-placa.py com src\main.py no VS Code. O arquivo local em src e o
+fonte principal do projeto; a copia na placa so muda depois de um comando fs cp.
+
+
+4.6 EDITAR, TESTAR E ENVIAR O PROGRAMA
+--------------------------------------
+
+Edite este arquivo no VS Code:
+
+    src\main.py
+
+Para executar a versao local temporariamente, sem substituir /main.py:
+
+    python -m mpremote connect COMx run .\src\main.py
+
+Interrompa o teste com Ctrl+C. Quando estiver satisfeito, envie o arquivo para
+a placa. Este comando substitui somente /main.py, nao o firmware MicroPython:
+
+    python -m mpremote connect COMx fs cp .\src\main.py :main.py
+
+Reinicie:
+
+    python -m mpremote connect COMx reset
+
+Abra o terminal serial para acompanhar o programa:
+
+    python -m mpremote connect COMx
+
+Saia do terminal com Ctrl+]. Em alguns teclados, Ctrl+X tambem encerra o shell.
+
+Depois de cada alteracao, o ciclo normal e:
+
+    python -m mpremote connect COMx run .\src\main.py
+    python -m mpremote connect COMx fs cp .\src\main.py :main.py
+    python -m mpremote connect COMx reset
+    python -m mpremote connect COMx
+
+
+4.7 SE A BIBLIOTECA SSD1306 NAO ESTIVER NA PLACA
+------------------------------------------------
+
+Instale-a pela conexao do computador com a internet:
+
+    python -m mpremote connect COMx mip install ssd1306
+
+Confirme:
+
+    python -m mpremote connect COMx fs ls :/lib
+
+O arquivo esperado e /lib/ssd1306.mpy. Esse pacote e instalado na placa, nao na
+venv do computador.
+
+
+4.8 QUANDO REALMENTE REINSTALAR O FIRMWARE
+------------------------------------------
+
+Somente use a secao 5 se a placa estiver vazia, corrompida, executando Arduino
+ou se houver uma decisao consciente de reinstalar o MicroPython. erase-flash e
+write-flash nao fazem parte da rotina de editar e enviar main.py.
+
+Se for preparar OUTRA placa, primeiro confirme que ela tambem e ESP32-C3, confira
+o tamanho da flash, identifique a pinagem do hardware e faca backup do firmware
+existente. Nao suponha que uma placa parecida usa os mesmos GPIOs do OLED.
+
+
+5. INSTALAR MICROPYTHON EM OUTRA ESP32-C3
+=========================================
+
+ATENCAO: esta secao apaga completamente o firmware existente na placa.
+Antes de executar erase-flash, confirme a porta, o modelo do chip e faca backup
+do firmware atual. Nao use estes comandos na rotina normal de desenvolvimento.
+
+Identificar o chip sem apagar a flash:
+
+    python -m esptool --port COMx chip-id
+
+Para uma ESP32-C3 com flash de 4 MB, fazer backup integral:
+
+    python -m esptool --port COMx read-flash 0x000000 0x400000 backup-firmware.bin
+
+Validar o tamanho e registrar o hash do backup:
+
+    Get-Item .\backup-firmware.bin | Select-Object Name, Length, LastWriteTime
+    (Get-FileHash .\backup-firmware.bin -Algorithm SHA256).Hash
+
+O tamanho esperado para uma flash de 4 MB e 4194304 bytes.
+
+Use o arquivo oficial ESP32_GENERIC_C3 da pagina:
+
+    https://micropython.org/download/ESP32_GENERIC_C3/
+
+Coloque o arquivo .bin na raiz do projeto. SOMENTE depois do backup, apagar a
+flash (DESTRUTIVO):
+
+    python -m esptool --port COMx erase-flash
+
+Gravar o MicroPython, substituindo NOME-DO-FIRMWARE.bin pelo nome real:
+
+    python -m esptool --port COMx --baud 460800 write-flash 0x0 .\NOME-DO-FIRMWARE.bin
+
+Confirmar o MicroPython:
+
+    python -m mpremote connect COMx exec "import sys; print(sys.implementation); print(sys.version)"
+
+Se a gravacao falhar em 460800 baud, tente novamente sem a opcao de velocidade:
+
+    python -m esptool --port COMx write-flash 0x0 .\NOME-DO-FIRMWARE.bin
+
+
+6. RESTAURAR O BACKUP ARDUINO DESTA PLACA
+=========================================
+
+ATENCAO: esta operacao apaga o MicroPython e todos os arquivos atuais da placa.
+O backup original deste projeto e:
+
+    backup-arduino-esp32c3.bin
+
+SHA-256 registrado:
+
+    082CE41734D19F051DD6C98390B8D0DD7CD1906254F02B16CF356407825AEE6B
+
+Antes de restaurar, confira se o arquivo continua integro:
+
+    (Get-FileHash .\backup-arduino-esp32c3.bin -Algorithm SHA256).Hash
+
+Apagar a flash (DESTRUTIVO):
+
+    python -m esptool --port COM3 erase-flash
+
+Restaurar os 4 MB a partir do endereco zero:
+
+    python -m esptool --port COM3 --baud 460800 write-flash 0x0 .\backup-arduino-esp32c3.bin
+
+
+7. LIGACOES DE HARDWARE CONFIRMADAS
+===================================
+
+DHT11 de 3 pinos:
+
+    DHT11 VCC  -> V3 (3,3 V) da placa
+    DHT11 DATA -> GPIO1
+    DHT11 GND  -> GND da placa
+
+OLED integrado:
+
+    SDA        -> GPIO5 (ligacao interna)
+    SCL        -> GPIO6 (ligacao interna)
+    endereco   -> 0x3C
+    resolucao  -> 72x40
+
+Nao use GPIO5 como DATA do DHT11, pois ele pertence ao OLED.
+Nao alimente o modulo DHT11 pelo pino V5 quando DATA estiver ligado diretamente
+ao ESP32-C3. Use V3 para manter alimentacao e nivel logico em 3,3 V.
+
+Sempre desconecte o cabo USB antes de alterar os fios.
+
+
+8. PROBLEMAS COMUNS
+===================
+
+Erro "could not open port" ou "access denied":
+
+- Feche qualquer terminal mpremote com Ctrl+].
+- Feche monitores seriais de outros programas.
+- Desconecte e reconecte o cabo USB.
+- Verifique se a porta COM mudou.
+
+Placa nao aparece no Windows:
+
+- Use outro cabo USB com suporte a dados.
+- Tente outra porta USB sem hub.
+- Confira o Gerenciador de Dispositivos.
+
+Programa main.py entrou em loop e impede acesso ao REPL:
+
+- Execute o mpremote e pressione Ctrl+C para interromper o programa.
+- Se necessario, mantenha BOOT pressionado, toque RST e solte BOOT somente para
+  entrar no modo de recuperacao. Nao execute erase-flash sem necessidade.
+
+OLED apagado:
+
+- Confirme que o scanner I2C retorna 0x3C em GPIO5/GPIO6.
+- Confirme que /lib/ssd1306.mpy existe.
+
+DHT11 retorna ETIMEDOUT:
+
+- Aguarde pelo menos dois segundos entre leituras.
+- Confira VCC em V3, DATA em GPIO1 e GND em GND.
+- Verifique contatos e cabos.
+
+Wi-Fi encontra a rede, mas nao conecta:
+
+- Esta placa aceita apenas redes de 2,4 GHz.
+- Confira SSID e senha respeitando maiusculas e minusculas.
+- Prefira WPA2-Personal; redes WPA3-only podem ser incompativeis.
+- Mantenha txpower=8.5, valor que funcionou de forma estavel nesta placa.
+- Use cabo USB de dados curto e uma porta USB com alimentacao estavel.
+
+
+9. CONFIGURAR OU TROCAR A REDE WI-FI
+====================================
+
+As credenciais ficam separadas do programa principal. No computador, edite:
+
+    src\secrets.py
+
+Formato do arquivo:
+
+    WIFI_SSID = "NOME_DA_REDE_2G"
+    WIFI_PASSWORD = "SENHA_DA_REDE"
+
+As aspas delimitam os textos e devem permanecer. Elas nao fazem parte do SSID
+nem da senha enviada ao roteador.
+
+Depois de trocar o nome ou a senha, salve o arquivo no VS Code com Ctrl+S e
+envie somente secrets.py para a placa:
+
+    python -m mpremote connect COM3 fs cp .\src\secrets.py :secrets.py
+
+Reinicie para o main.py ler as novas credenciais:
+
+    python -m mpremote connect COM3 reset
+
+Nao e necessario reenviar main.py quando apenas a rede ou a senha mudar.
+
+Confirme sem revelar a senha que a configuracao chegou a placa:
+
+    python -m mpremote connect COM3 exec "import secrets; print('SSID:', repr(secrets.WIFI_SSID)); print('Tamanho da senha:', len(secrets.WIFI_PASSWORD))"
+
+ATENCAO: src\secrets.py deve estar no .gitignore. Nao publique esse arquivo,
+nao envie sua senha em mensagens e nao inclua credenciais diretamente no
+main.py.
+
+Para outra porta serial, substitua COM3 pela COM detectada no computador.
+
+
+10. INSTALAR E INICIAR O PROGRAMA COM A API
+===========================================
+
+O comando run serve para testar sem substituir o programa permanente:
+
+    python -m mpremote connect COM3 run .\src\main.py
+
+Enquanto esse comando estiver aberto, o programa executa, mostra as leituras no
+terminal, atualiza o OLED e atende requisicoes HTTP.
+
+Depois de validar o teste, instale main.py permanentemente:
+
+    python -m mpremote connect COM3 fs cp .\src\main.py :main.py
+    python -m mpremote connect COM3 reset
+
+Ao receber energia ou ser reiniciada, a placa executa /main.py automaticamente,
+conecta no Wi-Fi configurado em /secrets.py, le o DHT11, atualiza o OLED e inicia
+a API. O VS Code nao precisa permanecer aberto para isso.
+
+Para acompanhar a inicializacao e descobrir o IP:
+
+    python -m mpremote connect COM3
+
+Exemplo de saida:
+
+    Wi-Fi conectado!
+    IP: 192.168.137.86
+    Pagina: http://192.168.137.86/
+    API: http://192.168.137.86/api/dados
+
+Saia do monitor com Ctrl+]. Fechar o monitor nao interrompe o programa salvo na
+placa.
+
+
+11. ACESSAR E TESTAR A API
+==========================
+
+O computador ou celular usado para acessar a API precisa conseguir alcancar a
+mesma rede local da ESP32. Se for usado o Hotspot Movel do Windows, ele deve
+permanecer ligado enquanto a placa estiver conectada.
+
+O endereco IP e fornecido pelo roteador/hotspot e pode mudar apos reiniciar a
+rede. Consulte novamente o terminal serial quando o endereco antigo parar de
+responder.
+
+Pagina inicial no navegador:
+
+    http://IP-DA-PLACA/
+
+Endpoint JSON:
+
+    http://IP-DA-PLACA/api/dados
+
+Exemplo observado neste computador:
+
+    http://192.168.137.86/
+    http://192.168.137.86/api/dados
+
+Exemplo de resposta da API:
+
+    {
+      "sensor": "DHT11",
+      "temperatura": 28,
+      "umidade": 62,
+      "unidade_temperatura": "C"
+    }
+
+Testar pelo PowerShell e converter automaticamente o JSON:
+
+    Invoke-RestMethod http://192.168.137.86/api/dados
+
+Testar exibindo a resposta HTTP bruta com curl:
+
+    curl.exe http://192.168.137.86/api/dados
+
+Testar no Postman:
+
+1. Crie uma nova requisicao HTTP.
+2. Escolha o metodo GET.
+3. Informe http://IP-DA-PLACA/api/dados.
+4. Clique em Send.
+
+A API atual aceita GET nas rotas:
+
+    GET /
+    GET /api/dados
+
+Outras rotas respondem 404. Outros metodos respondem 405.
+
+O navegador mostra "Nao seguro" porque a placa oferece HTTP, nao HTTPS. Isso e
+esperado para o teste dentro da rede local. Nao exponha diretamente a porta 80
+da ESP32 na internet e nao configure redirecionamento de porta no roteador. Para
+enviar dados pela internet futuramente, use HTTPS/MQTT para um servico externo,
+com autenticacao e credenciais proprias.
+
+
+12. RESUMO RAPIDO DA ROTINA ATUAL
+=================================
+
+Ativar a venv:
+
+    .\.venv\Scripts\Activate.ps1
+
+Enviar alteracao do programa:
+
+    python -m mpremote connect COM3 fs cp .\src\main.py :main.py
+
+Enviar alteracao de rede/senha:
+
+    python -m mpremote connect COM3 fs cp .\src\secrets.py :secrets.py
+
+Reiniciar e acompanhar:
+
+    python -m mpremote connect COM3 reset
+    python -m mpremote connect COM3
+
+Acessar os dados:
+
+    http://IP-DA-PLACA/api/dados
