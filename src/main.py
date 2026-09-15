@@ -8,9 +8,14 @@ import network
 import socket
 import ssd1306
 import time
+import requests
 
 # Credenciais mantidas fora do código principal.
-from secrets import WIFI_SSID, WIFI_PASSWORD
+from wifi_config import (
+    WIFI_SSID,
+    WIFI_PASSWORD,
+    THINGSPEAK_WRITE_API_KEY,
+)
 
 
 # ============================================================
@@ -24,6 +29,16 @@ DHT_PIN = 1
 OLED_SDA_PIN = 5
 OLED_SCL_PIN = 6
 
+LED_AZUL_PIN = 3
+LED_VERDE_PIN = 4
+LED_VERMELHO_PIN = 7
+
+TEMPERATURA_MINIMA = 0
+TEMPERATURA_MAXIMA = 5
+
+UMIDADE_MINIMA = 85
+UMIDADE_MAXIMA = 95
+
 # Configuração confirmada do OLED.
 OLED_ADDRESS = 0x3C
 OLED_WIDTH = 72
@@ -31,6 +46,8 @@ OLED_HEIGHT = 40
 
 # Intervalo mínimo entre leituras do DHT11.
 READ_INTERVAL_MS = 2_000
+
+THINGSPEAK_INTERVAL_MS = 20_000
 
 # Tempo máximo para conectar ao Wi-Fi.
 WIFI_TIMEOUT_SECONDS = 30
@@ -60,11 +77,15 @@ oled = ssd1306.SSD1306_I2C(
 
 # Inicializa o sensor DHT11.
 sensor = dht.DHT11(Pin(DHT_PIN))
+led_azul = Pin(LED_AZUL_PIN, Pin.OUT, value=0)
+led_verde = Pin(LED_VERDE_PIN, Pin.OUT, value=0)
+led_vermelho = Pin(LED_VERMELHO_PIN, Pin.OUT, value=0)
 
 
 # Últimos valores válidos obtidos do sensor.
 ultima_temperatura = None
 ultima_umidade = None
+ultimo_envio_thingspeak_ms = time.ticks_ms() - THINGSPEAK_INTERVAL_MS
 
 # Horário da última tentativa de leitura.
 ultima_leitura_ms = time.ticks_ms() - READ_INTERVAL_MS
@@ -117,8 +138,12 @@ def conectar_wifi():
     wifi.connect(WIFI_SSID, WIFI_PASSWORD)
 
     inicio = time.time()
+    estado_led_azul = False
 
     while not wifi.isconnected():
+        estado_led_azul = not estado_led_azul
+        led_azul.value(estado_led_azul)
+
         status = wifi.status()
         tempo_decorrido = time.time() - inicio
 
@@ -135,7 +160,7 @@ def conectar_wifi():
                 f"Timeout ao conectar no Wi-Fi. Status: {status}"
             )
 
-        time.sleep(1)
+        time.sleep_ms(500)
 
     ip = wifi.ifconfig()[0]
 
@@ -144,9 +169,41 @@ def conectar_wifi():
     print("RSSI:", wifi.status("rssi"), "dBm")
 
     mostrar_mensagem("Wi-Fi OK", ip)
-
+    led_azul.value(1)
     return wifi
 
+
+
+def atualizar_leds_status(wifi):
+    agora = time.ticks_ms()
+
+    # Pisca continuamente: 500 ms aceso e 500 ms apagado.
+    pisca_alerta = 1 if agora % 1_000 < 500 else 0
+
+    # Condição normal: aceso, com breve apagada a cada 5 segundos.
+    pulso_normal = 0 if agora % 5_000 < 250 else 1
+
+    # Azul: Wi-Fi.
+    if wifi.isconnected():
+        led_azul.value(pulso_normal)
+    else:
+        led_azul.value(pisca_alerta)
+
+    # Verde: temperatura.
+    if ultima_temperatura is None:
+        led_verde.value(0)
+    elif TEMPERATURA_MINIMA <= ultima_temperatura <= TEMPERATURA_MAXIMA:
+        led_verde.value(pulso_normal)
+    else:
+        led_verde.value(pisca_alerta)
+
+    # Vermelho: umidade.
+    if ultima_umidade is None:
+        led_vermelho.value(0)
+    elif UMIDADE_MINIMA <= ultima_umidade <= UMIDADE_MAXIMA:
+        led_vermelho.value(pulso_normal)
+    else:
+        led_vermelho.value(pisca_alerta)
 
 # ============================================================
 # LEITURA DO DHT11
@@ -195,7 +252,47 @@ def atualizar_sensor():
         if ultima_temperatura is None:
             mostrar_mensagem("Erro DHT11")
 
+def enviar_thingspeak():
+    global ultimo_envio_thingspeak_ms
 
+    agora = time.ticks_ms()
+
+    if time.ticks_diff(
+        agora,
+        ultimo_envio_thingspeak_ms,
+    ) < THINGSPEAK_INTERVAL_MS:
+        return
+
+    if ultima_temperatura is None or ultima_umidade is None:
+        return
+
+    ultimo_envio_thingspeak_ms = agora
+
+    url = (
+        "https://api.thingspeak.com/update"
+        f"?api_key={THINGSPEAK_WRITE_API_KEY}"
+        f"&field1={ultima_temperatura}"
+        f"&field2={ultima_umidade}"
+    )
+
+    resposta = None
+
+    try:
+        resposta = requests.get(url)
+        entry_id = resposta.text
+
+        if entry_id == "0":
+            print("ThingSpeak recusou a atualização")
+        else:
+            print("ThingSpeak atualizado. Entry ID:", entry_id)
+
+    except Exception as erro:
+        print("Falha ao enviar ao ThingSpeak:", erro)
+
+    finally:
+        if resposta is not None:
+            resposta.close()
+           
 # ============================================================
 # RESPOSTAS HTTP
 # ============================================================
@@ -370,6 +467,8 @@ print("API:", f"http://{ip}/api/dados")
 # Mantém sensor, display e servidor funcionando continuamente.
 while True:
     atualizar_sensor()
+    enviar_thingspeak()
+    atualizar_leds_status(wifi)
 
     try:
         cliente, endereco_cliente = servidor.accept()

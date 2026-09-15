@@ -8,3 +8,5 @@ src/secrets.py
 # Arquivos temporarios de ferramentas e editores.
 *.pyc
 .vscode/
+
+src/wifi_config.py
