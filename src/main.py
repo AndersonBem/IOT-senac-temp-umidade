@@ -1,10 +1,12 @@
 # Recursos de hardware do MicroPython.
-from machine import Pin, SoftI2C, unique_id
+from machine import Pin, RTC, SoftI2C, unique_id
  
 # Bibliotecas do MicroPython.
 import dht
 import json
 import network
+import ntptime
+import os
 import socket
 import ssd1306
 import time
@@ -39,6 +41,25 @@ from mqtt_config import (
     MQTT_INTERVALO_MS,
     MQTT_KEEPALIVE_S,
 )
+
+# Configuracoes do envio para a API do backend (endereco, intervalos, tamanho do lote).
+from api_config import (
+    API_URL,
+    DEVICE_UID,
+    REGISTRO_INTERVALO_MS,
+    ENVIO_INTERVALO_MS,
+    CONFIG_INTERVALO_MS,
+    LOTE_MAXIMO,
+    FILA_MAXIMA,
+    TIMEOUT_HTTP_S,
+    RECONEXAO_INTERVALO_MS,
+)
+
+# Chave da placa (X-Device-Key) gerada no backend. Fica no wifi_config.py, fora do Git.
+try:
+    from wifi_config import DEVICE_KEY
+except ImportError:
+    DEVICE_KEY = None
  
  
 # ============================================================
@@ -71,10 +92,6 @@ OLED_HEIGHT = 40
 READ_INTERVAL_MS = 2_000
  
 THINGSPEAK_INTERVAL_MS = 20_000
- 
-# Configurações do PythonAnywhere
-URL_PYTHONANYWHERE = "http://iotsaofranciscopi.pythonanywhere.com/api/dados"
-PYTHONANYWHERE_INTERVAL_MS = 3_000
  
 # Tempo máximo para conectar ao Wi-Fi.
 WIFI_TIMEOUT_SECONDS = 30
@@ -116,7 +133,6 @@ led_vermelho = Pin(LED_VERMELHO_PIN, Pin.OUT, value=0)
 ultima_temperatura = None
 ultima_umidade = None
 ultimo_envio_thingspeak_ms = time.ticks_ms() - THINGSPEAK_INTERVAL_MS
-ultimo_envio_pythonanywhere_ms = time.ticks_ms() - PYTHONANYWHERE_INTERVAL_MS
  
 # Horário da última tentativa de leitura.
 ultima_leitura_ms = time.ticks_ms() - READ_INTERVAL_MS
@@ -124,6 +140,16 @@ ultima_leitura_ms = time.ticks_ms() - READ_INTERVAL_MS
 # Conexão MQTT atual (None = desconectado).
 cliente_mqtt = None
 ultimo_envio_mqtt_ms = time.ticks_ms() - MQTT_INTERVALO_MS
+
+# Envio para a API: fila local, viagem ativa e controle de tempo.
+ARQUIVO_FILA = "fila.jsonl"       # uma leitura por linha, em JSON
+ARQUIVO_SEQUENCE = "sequence.txt" # ultimo sequence usado (sobrevive a reinicio)
+viagem_ativa = None               # shipment_id informado pela API (/iot/config)
+relogio_ok = False                # True depois de acertar o relogio (NTP ou API)
+ultimo_registro_ms = time.ticks_ms() - REGISTRO_INTERVALO_MS
+ultimo_envio_api_ms = time.ticks_ms() - ENVIO_INTERVALO_MS
+ultima_config_ms = time.ticks_ms() - CONFIG_INTERVALO_MS
+ultima_reconexao_ms = time.ticks_ms()
  
  
 # ============================================================
@@ -356,47 +382,298 @@ def enviar_thingspeak():
             resposta.close()
  
  
-def enviar_pythonanywhere():
-    global ultimo_envio_pythonanywhere_ms
- 
-    agora = time.ticks_ms()
- 
-    if time.ticks_diff(
-        agora,
-        ultimo_envio_pythonanywhere_ms,
-    ) < PYTHONANYWHERE_INTERVAL_MS:
-        return
- 
-    if ultima_temperatura is None or ultima_umidade is None:
-        print("[PythonAnywhere] Aguardando leitura do sensor...")
-        return
- 
-    ultimo_envio_pythonanywhere_ms = agora
- 
-    payload = {
-        "temperatura": str(ultima_temperatura),
-        "umidade": str(ultima_umidade)
-    }
- 
-    print("[PythonAnywhere] Enviando requisição POST...")
-    resposta = None
- 
+# ============================================================
+# ENVIO PARA A API DO BACKEND (fila local + lote)
+# ============================================================
+#
+# Regras que o backend exige (docs/API.md do backend):
+#   1. Toda leitura entra primeiro na FILA (arquivo na flash). Sem rede, nada se perde.
+#   2. Cada leitura tem um `sequence` que nunca se repete, nem depois de reiniciar a placa.
+#   3. `recorded_at` vai em UTC. Sem relogio certo, a placa nao registra.
+#   4. So sai da fila o que a API confirmar (accepted_reading_sequences).
+
+
+def agora_iso():
+    """Hora atual em UTC no formato ISO 8601 (ex.: 2026-11-05T13:00:00Z)."""
+    t = time.gmtime()
+    return "%04d-%02d-%02dT%02d:%02d:%02dZ" % t[:6]
+
+
+def relogio_valido():
+    """O relogio da placa comeca em 2000 quando liga; antes de acertar, o ano e < 2025."""
+    return time.gmtime()[0] >= 2025
+
+
+def acertar_relogio_ntp():
+    """Acerta o relogio pela internet (NTP, em UTC). Devolve True se conseguiu."""
+    global relogio_ok
     try:
-        resposta = requests.post(
-            URL_PYTHONANYWHERE,
-            json=payload,
-            headers={'Content-Type': 'application/json'}
-        )
-        print("[PythonAnywhere] Resposta -> Status:", resposta.status_code)
- 
+        ntptime.settime()
+        relogio_ok = relogio_valido()
+        print("[Relogio] NTP OK:", agora_iso())
     except Exception as erro:
-        print("[PythonAnywhere] Erro no envio:", erro)
- 
+        print("[Relogio] Falha no NTP:", erro)
+    return relogio_ok
+
+
+def acertar_relogio_pela_api(server_time):
+    """Plano B: usa a hora que a API devolve em /iot/config (ex.: 2026-11-05T13:00:00.123Z)."""
+    global relogio_ok
+    try:
+        data, hora = server_time.split("T")
+        ano, mes, dia = [int(x) for x in data.split("-")]
+        h, m, seg = hora.replace("Z", "").split(":")
+        RTC().datetime((ano, mes, dia, 0, int(h), int(m), int(float(seg)), 0))
+        relogio_ok = relogio_valido()
+        print("[Relogio] Acertado pela API:", agora_iso())
+    except Exception as erro:
+        print("[Relogio] Falha ao usar a hora da API:", erro)
+
+
+def proximo_sequence():
+    """Le o ultimo sequence da flash, soma 1, grava de volta e devolve."""
+    try:
+        with open(ARQUIVO_SEQUENCE) as arquivo:
+            ultimo = int(arquivo.read().strip() or 0)
+    except (OSError, ValueError):
+        ultimo = 0
+    atual = ultimo + 1
+    with open(ARQUIVO_SEQUENCE, "w") as arquivo:
+        arquivo.write(str(atual))
+    return atual
+
+
+def substituir_fila(temporario):
+    """Troca a fila pelo arquivo novo. Em alguns sistemas de arquivos o rename nao
+    sobrescreve: nesse caso apaga a antiga e renomeia."""
+    try:
+        os.rename(temporario, ARQUIVO_FILA)
+    except OSError:
+        os.remove(ARQUIVO_FILA)
+        os.rename(temporario, ARQUIVO_FILA)
+
+
+def http(metodo, url, **opcoes):
+    """requests com tempo limite. Versoes antigas do MicroPython nao aceitam `timeout`:
+    nesse caso repete sem ele."""
+    try:
+        return metodo(url, timeout=TIMEOUT_HTTP_S, **opcoes)
+    except TypeError:
+        return metodo(url, **opcoes)
+
+
+def tamanho_fila():
+    total = 0
+    try:
+        with open(ARQUIVO_FILA) as arquivo:
+            for _ in arquivo:
+                total += 1
+    except OSError:
+        pass
+    return total
+
+
+def descartar_mais_antigas(quantas):
+    """Fila cheia (muito tempo sem rede): apaga as leituras mais antigas."""
+    try:
+        with open(ARQUIVO_FILA) as origem, open(ARQUIVO_FILA + ".tmp", "w") as destino:
+            for numero, linha in enumerate(origem):
+                if numero >= quantas:
+                    destino.write(linha)
+        substituir_fila(ARQUIVO_FILA + ".tmp")
+        print("[Fila] Cheia: descartadas", quantas, "leituras antigas")
+    except OSError as erro:
+        print("[Fila] Erro ao descartar:", erro)
+
+
+def ler_pico_impacto():
+    """Pico de aceleracao dinamica (g) desde a ultima leitura. Sem ADXL345 ainda: None."""
+    return None
+
+
+def registrar_leitura():
+    """A cada REGISTRO_INTERVALO_MS, coloca a ultima medicao na fila local."""
+    global ultimo_registro_ms
+
+    agora = time.ticks_ms()
+    if time.ticks_diff(agora, ultimo_registro_ms) < REGISTRO_INTERVALO_MS:
+        return
+    if ultima_temperatura is None or ultima_umidade is None:
+        return
+    if not relogio_ok:
+        print("[Fila] Relogio ainda nao acertado: leitura nao registrada")
+        return
+    if viagem_ativa is None:
+        # Sem viagem ativa no backend, a leitura nao teria a quem pertencer.
+        return
+
+    ultimo_registro_ms = agora
+
+    leitura = {
+        "shipment_id": viagem_ativa,   # guardado junto: o dado offline continua na viagem certa
+        "sequence": proximo_sequence(),
+        "recorded_at": agora_iso(),
+        "temperature_c": ultima_temperatura,
+        "humidity_pct": ultima_umidade,
+        "impact_peak_g": ler_pico_impacto(),
+    }
+    with open(ARQUIVO_FILA, "a") as arquivo:
+        arquivo.write(json.dumps(leitura) + "\n")
+
+    total = tamanho_fila()
+    print("[Fila] Leitura #%d registrada (%d na fila)" % (leitura["sequence"], total))
+    if total > FILA_MAXIMA:
+        descartar_mais_antigas(total - FILA_MAXIMA)
+
+
+def ler_lote():
+    """Le ate LOTE_MAXIMO leituras do inicio da fila, todas da mesma viagem."""
+    lote, viagem = [], None
+    try:
+        with open(ARQUIVO_FILA) as arquivo:
+            for linha in arquivo:
+                try:
+                    item = json.loads(linha)
+                except ValueError:
+                    continue  # linha corrompida (ex.: energia caiu no meio da escrita)
+                if viagem is None:
+                    viagem = item["shipment_id"]
+                if item["shipment_id"] != viagem:
+                    break
+                lote.append(item)
+                if len(lote) >= LOTE_MAXIMO:
+                    break
+    except OSError:
+        pass
+    return viagem, lote
+
+
+def remover_da_fila(sequences, viagem):
+    """Reescreve a fila sem as leituras confirmadas (lendo linha a linha, para caber na RAM)."""
+    confirmadas = set(sequences)
+    try:
+        with open(ARQUIVO_FILA) as origem, open(ARQUIVO_FILA + ".tmp", "w") as destino:
+            for linha in origem:
+                try:
+                    item = json.loads(linha)
+                except ValueError:
+                    continue
+                if item["shipment_id"] == viagem and item["sequence"] in confirmadas:
+                    continue
+                destino.write(linha)
+        substituir_fila(ARQUIVO_FILA + ".tmp")
+    except OSError as erro:
+        print("[Fila] Erro ao remover confirmadas:", erro)
+
+
+def cabecalhos_api():
+    return {"Content-Type": "application/json", "X-Device-Key": DEVICE_KEY}
+
+
+def atualizar_config(wifi):
+    """Pergunta a API qual e a viagem ativa desta placa (e aproveita para acertar o relogio)."""
+    global viagem_ativa, ultima_config_ms
+
+    agora = time.ticks_ms()
+    if time.ticks_diff(agora, ultima_config_ms) < CONFIG_INTERVALO_MS:
+        return
+    if not wifi.isconnected() or not DEVICE_KEY:
+        return
+    ultima_config_ms = agora
+
+    resposta = None
+    try:
+        resposta = http(requests.get, API_URL + "/iot/config", headers=cabecalhos_api())
+        if resposta.status_code == 200:
+            dados = resposta.json()["data"]
+            if dados["shipment_id"] != viagem_ativa:
+                print("[API] Viagem ativa:", dados["shipment_id"])
+            viagem_ativa = dados["shipment_id"]
+            if not relogio_ok:
+                acertar_relogio_pela_api(dados["server_time"])
+        else:
+            print("[API] /iot/config respondeu", resposta.status_code, resposta.text)
+    except Exception as erro:
+        print("[API] Falha em /iot/config:", erro)
     finally:
         if resposta is not None:
             resposta.close()
- 
- 
+
+
+def enviar_api(wifi):
+    """Envia um lote da fila e apaga dela so o que a API confirmou."""
+    global ultimo_envio_api_ms
+
+    agora = time.ticks_ms()
+    if time.ticks_diff(agora, ultimo_envio_api_ms) < ENVIO_INTERVALO_MS:
+        return
+    if not wifi.isconnected() or not DEVICE_KEY:
+        return
+    ultimo_envio_api_ms = agora
+
+    viagem, lote = ler_lote()
+    if not lote:
+        return
+
+    corpo = {
+        "device_uid": DEVICE_UID,
+        "shipment_id": viagem,
+        "network": "wifi",
+        "readings": [
+            {chave: item[chave] for chave in ("sequence", "recorded_at", "temperature_c",
+                                             "humidity_pct", "impact_peak_g")}
+            for item in lote
+        ],
+    }
+
+    resposta = None
+    try:
+        resposta = http(requests.post, API_URL + "/iot/telemetry/batch", data=json.dumps(corpo),
+                        headers=cabecalhos_api())
+        if resposta.status_code == 200:
+            aceitas = resposta.json()["data"]["accepted_reading_sequences"]
+            remover_da_fila(aceitas, viagem)
+            print("[API] Lote enviado: %d de %d confirmadas" % (len(aceitas), len(lote)))
+        elif resposta.status_code == 400:
+            # A API recusou o lote inteiro (ex.: viagem encerrada/cancelada ou dado invalido).
+            # Reenviar nao adianta: tira da fila para nao travar as proximas leituras.
+            print("[API] Lote recusado (400):", resposta.text)
+            remover_da_fila([item["sequence"] for item in lote], viagem)
+        else:
+            # 401 (chave errada), 429 (limite), 5xx: mantem na fila e tenta depois.
+            print("[API] Erro", resposta.status_code, "- lote mantido na fila")
+    except Exception as erro:
+        print("[API] Sem resposta (lote mantido na fila):", erro)
+    finally:
+        if resposta is not None:
+            resposta.close()
+
+
+def manter_wifi(wifi):
+    """Se o Wi-Fi caiu, tenta reconectar de vez em quando SEM parar as medicoes."""
+    global ultima_reconexao_ms
+
+    if wifi.isconnected():
+        return
+    agora = time.ticks_ms()
+    if time.ticks_diff(agora, ultima_reconexao_ms) < RECONEXAO_INTERVALO_MS:
+        return
+    ultima_reconexao_ms = agora
+
+    print("[Wi-Fi] Desconectado. Tentando reconectar...")
+    try:
+        visiveis = {item[0].decode() for item in wifi.scan()}
+    except Exception:
+        visiveis = set()
+    for ssid, senha in REDES:
+        if ssid in visiveis:
+            try:
+                wifi.connect(ssid, senha)
+            except OSError:
+                pass
+            return  # a conexao termina sozinha; o loop segue medindo
+
+
 # ============================================================
 # MQTT
 # ============================================================
@@ -441,6 +718,10 @@ def enviar_mqtt(wifi):
     if time.ticks_diff(agora, ultimo_envio_mqtt_ms) < MQTT_INTERVALO_MS:
         return
 
+    # Marca a tentativa antes de checar o Wi-Fi: sem rede, avisa uma vez por intervalo
+    # (e nao a cada volta do loop).
+    ultimo_envio_mqtt_ms = agora
+
     if not wifi.isconnected():
         print("[MQTT] Sem Wi-Fi, aguardando...")
         return
@@ -448,8 +729,6 @@ def enviar_mqtt(wifi):
     if ultima_temperatura is None or ultima_umidade is None:
         print("[MQTT] Aguardando leitura do sensor...")
         return
-
-    ultimo_envio_mqtt_ms = agora
 
     try:
         # Se caiu antes, reconecta (só a cada MQTT_INTERVALO_MS).
@@ -637,6 +916,11 @@ def atender_cliente(cliente):
  
 # Conecta ao Wi-Fi.
 wifi = conectar_wifi()
+
+# Acerta o relogio (UTC). Se o NTP falhar, a hora vem da API em /iot/config.
+acertar_relogio_ntp()
+if not DEVICE_KEY:
+    print("[API] DEVICE_KEY ausente no wifi_config.py: envio para a API desligado")
  
 # Faz a primeira tentativa de leitura.
 atualizar_sensor()
@@ -649,12 +933,15 @@ ip = wifi.ifconfig()[0]
 print("Página:", f"http://{ip}/")
 print("API:", f"http://{ip}/api/dados")
  
-# Mantém sensor, display, envios na nuvem e servidor funcionando continuamente.
+# Mantem sensor, display, envios (MQTT, ThingSpeak e API) e servidor local funcionando continuamente.
 while True:
     atualizar_sensor()
+    manter_wifi(wifi)
     enviar_thingspeak()
-    enviar_pythonanywhere()
     enviar_mqtt(wifi)
+    atualizar_config(wifi)
+    registrar_leitura()
+    enviar_api(wifi)
     atualizar_leds_status(wifi)
  
     try:
