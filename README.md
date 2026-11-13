@@ -53,13 +53,13 @@ abrir a página automaticamente; se não abrir, use:
 
     http://192.168.4.1
 
-No início de src\wifi_portal.py:
+No arquivo local src\wifi_config.py:
 
-    CONFIG_AP_PREFIXO = "NOME-DA-REDE"
-    CONFIG_AP_SENHA = "senha-com-no-minimo-8-caracteres"
+    PORTAL_WIFI_NOME = "NOME-DA-REDE"
+    PORTAL_WIFI_SENHA = "senha-com-no-minimo-8-caracteres"
 
-O portal grava a rede cadastrada em redes.json na flash. Essa rede tem
-prioridade sobre as redes de wifi_config.py.
+wifi_config.py é ignorado pelo Git. O portal grava a rede cadastrada em
+redes.json na flash; essa rede tem prioridade sobre as redes de reserva.
 
 ## 🗂️ Estrutura
 

@@ -11,11 +11,9 @@ import time
 import ubinascii
 import _thread
 from machine import reset, unique_id
+from wifi_config import PORTAL_WIFI_NOME, PORTAL_WIFI_SENHA
 
 
-# Troque esta senha antes de usar fora de testes. WPA2 exige no minimo 8 caracteres.
-CONFIG_AP_PREFIXO = "Caminho-do-Vale"
-CONFIG_AP_SENHA = "Projeto123"
 ARQUIVO_REDES = "redes.json"
 
 
@@ -227,16 +225,16 @@ def iniciar_portal():
     ap.active(True)
 
     sufixo = ubinascii.hexlify(unique_id()).decode()[-4:]
-    nome_ap = CONFIG_AP_PREFIXO + sufixo
+    nome_ap = PORTAL_WIFI_NOME + sufixo
     ap.config(
         essid=nome_ap,
-        password=CONFIG_AP_SENHA,
+        password=PORTAL_WIFI_SENHA,
         authmode=network.AUTH_WPA_WPA2_PSK,
     )
 
     ip = ap.ifconfig()[0]
     print("\n[Portal] Rede criada:", nome_ap)
-    print("[Portal] Senha:", CONFIG_AP_SENHA)
+    print("[Portal] Senha:", PORTAL_WIFI_SENHA)
     print("[Portal] Abra no celular: http://%s/\n" % ip)
 
     # O DNS local faz qualquer endereco HTTP apontar para esta pagina.

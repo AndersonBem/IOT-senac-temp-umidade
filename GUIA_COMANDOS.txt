@@ -104,21 +104,21 @@ queira desfazer a rede cadastrada no teste.
 5. CONFIGURAR A REDE CRIADA PELA ESP32
 =======================================
 
-No inicio de src\wifi_portal.py:
+No arquivo local src\wifi_config.py:
 
-    CONFIG_AP_PREFIXO = "NOME-DA-REDE"
-    CONFIG_AP_SENHA = "senha-com-8-ou-mais-caracteres"
+    PORTAL_WIFI_NOME = "NOME-DA-REDE"
+    PORTAL_WIFI_SENHA = "senha-com-8-ou-mais-caracteres"
 
-Esses valores sao da rede criada pela ESP32 para o celular. Eles nao mudam a
-senha da rede destino.
+Esses valores sao da rede criada pela ESP32 para o celular e nao sobem para o
+Git. Eles nao mudam a senha da rede destino.
 
 O nome atual usa:
 
-    nome_ap = CONFIG_AP_PREFIXO + sufixo
+    nome_ap = PORTAL_WIFI_NOME + sufixo
 
-Para usar exatamente CONFIG_AP_PREFIXO, sem sufixo:
+Para usar exatamente PORTAL_WIFI_NOME, sem sufixo:
 
-    nome_ap = CONFIG_AP_PREFIXO
+    nome_ap = PORTAL_WIFI_NOME
 
 Depois de editar, envie wifi_portal.py conforme a secao 3.
 
@@ -129,7 +129,7 @@ Depois de editar, envie wifi_portal.py conforme a secao 3.
 Quando main.py nao encontra redes conhecidas em duas buscas, ele abre o portal.
 
 1. Conecte o celular ao SSID da ESP32.
-2. Informe CONFIG_AP_SENHA.
+2. Informe PORTAL_WIFI_SENHA.
 3. Mantenha a conexao se o celular avisar "Sem internet".
 4. O captive portal pode abrir a tela de login automaticamente.
 5. Se nao abrir, use http://192.168.4.1 (HTTP, nao HTTPS).
