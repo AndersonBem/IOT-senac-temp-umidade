@@ -1,0 +1,220 @@
+GUIA DE COMANDOS - ESP32-C3 CAMINHO DO VALE
+============================================
+
+Versao atual: MicroPython com sensor, MQTT/API e portal Wi-Fi pelo celular.
+
+ARQUIVOS
+========
+
+    src\main.py          programa principal
+    src\wifi_config.py   redes de reserva e chaves locais
+    src\wifi_portal.py   ponto de acesso, captive portal e pagina Wi-Fi
+    src\mqtt_config.py   MQTT
+    src\api_config.py    API
+
+Na placa ficam /main.py, /wifi_portal.py e /redes.json. Nao publique
+wifi_config.py, redes.json ou senhas.
+
+
+1. TERMINAL E VENV
+==================
+
+Abra o PowerShell na pasta que contem src:
+
+    cd .\IOT-senac-temp-umidade-main-atualizado\IOT-senac-temp-umidade-main
+
+Ative a venv:
+
+    .\.venv\Scripts\Activate.ps1
+
+Com (.venv) no prompt, use python -m mpremote. Se a venv nao existir:
+
+    python -m venv .venv
+    .\.venv\Scripts\Activate.ps1
+    python -m pip install --upgrade pip
+    python -m pip install esptool==5.4.0 mpremote==1.29.0
+
+Em computadores sem o Python Launcher, use python, nao py.
+
+
+2. PORTA E COMUNICACAO
+======================
+
+Listar portas:
+
+    [System.IO.Ports.SerialPort]::GetPortNames()
+
+Substitua COMx pela porta da ESP32, por exemplo COM5.
+
+Testar:
+
+    python -m mpremote connect COMx exec "print('ESP32 OK')"
+
+Se ocorrer SerialTimeoutException, feche monitores seriais, reconecte o cabo,
+pressione RST uma vez e tente novamente. Nao mantenha BOOT pressionado para
+usar mpremote.
+
+Abrir monitor serial:
+
+    python -m mpremote connect COMx
+
+Ctrl+D reinicia, Ctrl+C interrompe e Ctrl+] sai.
+
+
+3. ENVIAR ARQUIVOS
+==================
+
+Alterou apenas a pagina/portal:
+
+    python -m mpremote connect COMx fs cp .\src\wifi_portal.py :wifi_portal.py
+    python -m mpremote connect COMx reset
+
+Alterou main.py: envie os dois, pois main.py importa wifi_portal.py:
+
+    python -m mpremote connect COMx fs cp .\src\wifi_portal.py :wifi_portal.py
+    python -m mpremote connect COMx fs cp .\src\main.py :main.py
+    python -m mpremote connect COMx reset
+
+Antes de substituir /main.py, e possivel guardar uma copia do que ja esta na
+placa:
+
+    python -m mpremote connect COMx fs cp :main.py .\main-da-placa.py
+
+Envie wifi_portal.py antes de main.py. Se main.py for atualizado sozinho e o
+modulo nao existir na placa, a inicializacao pode parar com erro de importacao.
+
+
+4. TESTAR O PORTAL SEM ALTERAR /main.py
+========================================
+
+    python -m mpremote connect COMx run .\src\wifi_portal.py
+
+O terminal fica ocupado enquanto o portal estiver ativo. A saida esperada:
+
+    [Portal] Rede criada: ...
+    [Portal] Abra no celular: http://192.168.4.1/
+
+Para encerrar, pressione Ctrl+C.
+
+ATENCAO: run nao substitui /main.py, mas, se o formulario for salvo durante o
+teste, ele grava /redes.json. Remova esse arquivo conforme a secao 7 caso
+queira desfazer a rede cadastrada no teste.
+
+
+5. CONFIGURAR A REDE CRIADA PELA ESP32
+=======================================
+
+No inicio de src\wifi_portal.py:
+
+    CONFIG_AP_PREFIXO = "NOME-DA-REDE"
+    CONFIG_AP_SENHA = "senha-com-8-ou-mais-caracteres"
+
+Esses valores sao da rede criada pela ESP32 para o celular. Eles nao mudam a
+senha da rede destino.
+
+O nome atual usa:
+
+    nome_ap = CONFIG_AP_PREFIXO + sufixo
+
+Para usar exatamente CONFIG_AP_PREFIXO, sem sufixo:
+
+    nome_ap = CONFIG_AP_PREFIXO
+
+Depois de editar, envie wifi_portal.py conforme a secao 3.
+
+
+6. USAR O PORTAL NO CELULAR
+===========================
+
+Quando main.py nao encontra redes conhecidas em duas buscas, ele abre o portal.
+
+1. Conecte o celular ao SSID da ESP32.
+2. Informe CONFIG_AP_SENHA.
+3. Mantenha a conexao se o celular avisar "Sem internet".
+4. O captive portal pode abrir a tela de login automaticamente.
+5. Se nao abrir, use http://192.168.4.1 (HTTP, nao HTTPS).
+6. Informe o SSID e a senha da rede destino, que deve ser 2,4 GHz.
+7. Toque em Salvar e conectar.
+
+O portal grava /redes.json e reinicia a placa.
+
+
+7. REDES SALVAS E TROCA DE SENHA
+================================
+
+main.py usa primeiro /redes.json e depois wifi_config.py. Portanto, a ultima
+rede cadastrada pelo portal tem prioridade.
+
+Para trocar SSID ou senha da rede destino, force o portal:
+
+    python -m mpremote connect COMx run .\src\wifi_portal.py
+
+Cadastre a rede novamente pelo celular. Nao envie senhas em mensagens.
+
+Se uma rede conhecida estiver visivel, mas com senha errada, a placa pode
+continuar tentando essa rede e nao abrir o portal automaticamente. Use o
+comando acima.
+
+Apagar somente a rede salva pelo portal:
+
+    python -m mpremote connect COMx fs rm :redes.json
+    python -m mpremote connect COMx reset
+
+Isso nao apaga firmware, main.py, wifi_portal.py nem wifi_config.py.
+Use quando for preciso fazer a placa esquecer a ultima rede cadastrada (por
+exemplo, um hotspot antigo). Sem redes.json, a placa volta a usar as redes de
+reserva de wifi_config.py ou abre o portal quando nao encontrar nenhuma.
+
+Ver SSID salvo, sem exibir senha:
+
+    python -m mpremote connect COMx exec "import json; print([rede[0] for rede in json.load(open('redes.json'))])"
+
+Ver redes encontradas:
+
+    python -m mpremote connect COMx exec "import network; w=network.WLAN(network.STA_IF); w.active(True); print([item[0] for item in w.scan()])"
+
+SSID salvo e SSID no scan devem ser identicos. Maiusculas, espacos e acentos
+contam.
+
+
+8. DIAGNOSTICO
+==============
+
+Mensagem:
+
+    Nenhuma rede conhecida por perto. Tentando de novo...
+
+Significa que nenhuma rede cadastrada apareceu. Depois da segunda busca deve
+aparecer [Portal] Rede criada. Se nao aparecer, envie main.py e wifi_portal.py
+novamente.
+
+Se a rede da ESP32 nao aparecer no celular:
+
+    python -m mpremote connect COMx run .\src\wifi_portal.py
+
+Regras: ESP32-C3 aceita somente 2,4 GHz; WPA2-Personal e mais compativel; WPA3
+only, sinal fraco ou SSID diferente impedem a conexao.
+
+
+9. TESTES DE HARDWARE
+=====================
+
+OLED:
+
+    python -m mpremote connect COMx exec "from machine import Pin, SoftI2C; i2c=SoftI2C(sda=Pin(5), scl=Pin(6)); print([hex(x) for x in i2c.scan()])"
+
+Resultado esperado: ['0x3c']
+
+DHT11:
+
+    python -m mpremote connect COMx exec "from machine import Pin; import dht, time; sensor=dht.DHT11(Pin(1)); time.sleep(2); sensor.measure(); print('Temperatura:', sensor.temperature(), 'C'); print('Umidade:', sensor.humidity(), '%')"
+
+
+10. SEGURANCA
+=============
+
+- Use senha forte no portal.
+- O portal deve ficar ativo apenas quando necessario.
+- Nao publique wifi_config.py, redes.json ou backup da flash.
+- Nao execute erase-flash/write-flash na rotina normal: essas operacoes apagam
+  ou substituem firmware e arquivos da placa.

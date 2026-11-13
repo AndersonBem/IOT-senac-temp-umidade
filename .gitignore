@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+src/secrets.py
+
+# Firmwares e backups binarios podem conter credenciais gravadas na flash.
+*.bin
+
+# Arquivos temporarios de ferramentas e editores.
+*.pyc
+.vscode/
+src/wifi_config.py 
